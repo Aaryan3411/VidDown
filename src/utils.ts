@@ -128,26 +128,15 @@ export function sanitizeFilename(name: string, ext = 'mp4'): string {
   return `${sanitized}.${ext}`;
 }
 
-export function getYouTubeDownloadLinks(videoId: string) {
+export function getYouTubeCommands(videoId: string) {
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   return {
-    saveFromUrl: `https://ssyoutube.com/watch?v=${videoId}`,
-    y2metaUrl: `https://y2meta.tube/en/?url=${encodeURIComponent(ytUrl)}`,
-    tenDownloaderUrl: `https://10downloader.com/download?v=${encodeURIComponent(ytUrl)}`,
-    cobaltUrl: `https://cobalt.tools/`,
     ytDlpVideoCmd: `yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" "${ytUrl}"`,
     ytDlpAudioCmd: `yt-dlp -x --audio-format mp3 "${ytUrl}"`,
   };
 }
 
 export const SAMPLE_VIDEOS: SampleVideo[] = [
-  {
-    title: 'YouTube Stream Sample',
-    resolution: '1080p HD',
-    format: 'YouTube',
-    sizeApprox: 'Adaptive',
-    url: 'https://www.youtube.com/watch?v=7w7LUaLpM4E',
-  },
   {
     title: 'Blooming Flower (MP4)',
     resolution: '640 × 360',

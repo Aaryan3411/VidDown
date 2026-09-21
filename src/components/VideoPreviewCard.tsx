@@ -12,22 +12,26 @@ import {
   Edit2,
   Sparkles,
   Terminal,
-  Music,
-  Info,
   Youtube,
   AlertCircle,
+  Image as ImageIcon,
+  CheckCircle2,
+  Shield,
+  ArrowRight,
 } from 'lucide-react';
 import { VideoProbeResult } from '../types';
-import { formatBytes, formatDuration, extractYouTubeId, getYouTubeDownloadLinks } from '../utils';
+import { formatBytes, formatDuration, extractYouTubeId, getYouTubeCommands } from '../utils';
 
 interface VideoPreviewCardProps {
   video: VideoProbeResult;
   onDownloadStarted: (filename: string, url: string, sizeBytes: number | null, contentType: string) => void;
+  onLoadDirectSample?: (sampleUrl: string) => void;
 }
 
 export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
   video,
   onDownloadStarted,
+  onLoadDirectSample,
 }) => {
   const youTubeId = video.youTubeId || extractYouTubeId(video.url);
   const isYouTube = Boolean(video.isYouTube || youTubeId);
@@ -41,8 +45,13 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
   const [duration, setDuration] = useState<number | null>(null);
   const [videoDimensions, setVideoDimensions] = useState<{ width: number; height: number } | null>(null);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
+  const [downloadSpeed, setDownloadSpeed] = useState<string | null>(null);
+  const [downloadStatus, setDownloadStatus] = useState<string | null>(null);
+  const [downloadSuccess, setDownloadSuccess] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [showCorsHelp, setShowCorsHelp] = useState(false);
+  const [isDownloadingThumbnail, setIsDownloadingThumbnail] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [useDirectStream, setUseDirectStream] = useState<boolean>(
@@ -55,7 +64,7 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
     customFilename
   )}`;
 
-  const ytLinks = youTubeId ? getYouTubeDownloadLinks(youTubeId) : null;
+  const ytCommands = youTubeId ? getYouTubeCommands(youTubeId) : null;
 
   const handleMetadataLoaded = (e: React.SyntheticEvent<HTMLVideoElement>) => {
     const target = e.currentTarget;
@@ -88,9 +97,43 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
     }
   };
 
-  // Direct media download handler
+  // In-page standalone thumbnail download for YouTube
+  const handleDownloadThumbnail = async () => {
+    if (!youTubeId) return;
+    setIsDownloadingThumbnail(true);
+    try {
+      const thumbUrl = `https://i.ytimg.com/vi/${youTubeId}/hqdefault.jpg`;
+      const res = await fetch(thumbUrl, { mode: 'cors' });
+      if (!res.ok) throw new Error('Thumbnail fetch failed');
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `${customFilename.replace(/\.[^/.]+$/, '')}_thumbnail.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(blobUrl);
+    } catch {
+      // Fallback: direct download link
+      const link = document.createElement('a');
+      link.href = `https://i.ytimg.com/vi/${youTubeId}/hqdefault.jpg`;
+      link.target = '_blank';
+      link.download = 'thumbnail.jpg';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } finally {
+      setIsDownloadingThumbnail(false);
+    }
+  };
+
+  // True standalone in-browser video download handler with live progress
   const handleTriggerDirectDownload = async () => {
     setIsDownloading(true);
+    setDownloadProgress(0);
+    setDownloadStatus('Connecting to media stream...');
+    setDownloadSuccess(false);
     setShowCorsHelp(false);
 
     onDownloadStarted(
@@ -104,22 +147,83 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
       typeof window !== 'undefined' &&
       (window.location.hostname.includes('github.io') || window.location.protocol === 'file:');
 
+    // Scenario A: Full-stack backend available
     if (!isStaticHost) {
-      // Running on full-stack server (e.g. Cloud Run, localhost): stream with Content-Disposition
+      setDownloadStatus('Downloading via stream proxy...');
       const link = document.createElement('a');
       link.href = downloadApiUrl;
       link.download = customFilename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setTimeout(() => setIsDownloading(false), 1500);
+      setDownloadProgress(100);
+      setDownloadStatus('Download initiated!');
+      setDownloadSuccess(true);
+      setTimeout(() => {
+        setIsDownloading(false);
+      }, 2000);
       return;
     }
 
-    // Static Host (GitHub Pages): Attempt in-browser Blob download
+    // Scenario B: Standalone static in-browser download (GitHub Pages)
     try {
+      setDownloadStatus('Fetching video chunks into browser memory...');
+      const startTime = Date.now();
       const response = await fetch(video.url, { mode: 'cors' });
-      if (response.ok) {
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const contentLengthHeader = response.headers.get('content-length');
+      const totalBytes = contentLengthHeader ? parseInt(contentLengthHeader, 10) : video.sizeBytes || null;
+
+      if (response.body && typeof ReadableStream !== 'undefined') {
+        const reader = response.body.getReader();
+        let receivedBytes = 0;
+        const chunks: BlobPart[] = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          chunks.push(value);
+          receivedBytes += value.length;
+
+          const elapsedSecs = (Date.now() - startTime) / 1000;
+          if (elapsedSecs > 0) {
+            const speedMBps = (receivedBytes / (1024 * 1024)) / elapsedSecs;
+            setDownloadSpeed(`${speedMBps.toFixed(1)} MB/s`);
+          }
+
+          if (totalBytes && totalBytes > 0) {
+            const percent = Math.min(99, Math.round((receivedBytes / totalBytes) * 100));
+            setDownloadProgress(percent);
+            setDownloadStatus(`Downloading: ${percent}% (${formatBytes(receivedBytes)} / ${formatBytes(totalBytes)})`);
+          } else {
+            setDownloadStatus(`Streaming: ${formatBytes(receivedBytes)} downloaded`);
+          }
+        }
+
+        setDownloadProgress(100);
+        setDownloadStatus('Assembling video container and saving file...');
+
+        const blob = new Blob(chunks, { type: video.contentType || 'video/mp4' });
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = customFilename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        setTimeout(() => window.URL.revokeObjectURL(blobUrl), 20000);
+        setDownloadSuccess(true);
+        setDownloadStatus('Video saved to your downloads!');
+        setIsDownloading(false);
+        return;
+      } else {
+        // Simple blob fallback
         const blob = await response.blob();
         const blobUrl = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -129,16 +233,18 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
         link.click();
         document.body.removeChild(link);
         window.URL.revokeObjectURL(blobUrl);
+        setDownloadSuccess(true);
+        setDownloadStatus('Video saved to your downloads!');
         setIsDownloading(false);
         return;
       }
     } catch {
-      // Remote server blocked CORS fetch
+      // Direct in-browser fetch was blocked by remote server CORS headers
+      setIsDownloading(false);
+      setDownloadProgress(null);
+      setDownloadStatus(null);
+      setShowCorsHelp(true);
     }
-
-    // If CORS prevented automated Blob saving, display the helper modal
-    setIsDownloading(false);
-    setShowCorsHelp(true);
   };
 
   const cleanContentType = (video.contentType || 'video/mp4')
@@ -292,7 +398,7 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
               {isYouTube ? (
                 <>
                   <Youtube className="w-3.5 h-3.5 text-red-600" />
-                  <span className="font-medium text-zinc-700">Interactive YouTube Player</span>
+                  <span className="font-medium text-zinc-700">Interactive YouTube In-App Player</span>
                 </>
               ) : (
                 <>
@@ -305,7 +411,7 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
           </div>
         </div>
 
-        {/* Specifications & Actions Column */}
+        {/* Specifications & Standalone Actions Column */}
         <div className="lg:col-span-5 flex flex-col justify-between h-full space-y-6">
           {/* Metadata Grid */}
           <div className="space-y-4">
@@ -324,7 +430,7 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
               <div className="p-3 bg-zinc-50 rounded-xl border border-zinc-100">
                 <div className="flex items-center gap-1.5 text-xs text-zinc-500 mb-1">
                   <HardDrive className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>{isYouTube ? 'Quality Options' : 'Estimated Size'}</span>
+                  <span>{isYouTube ? 'Available Qualities' : 'Estimated Size'}</span>
                 </div>
                 <div className="text-sm font-bold text-zinc-900">
                   {isYouTube ? '1080p, 720p, 480p' : formatBytes(video.sizeBytes)}
@@ -337,7 +443,7 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
                   <span>Container / Type</span>
                 </div>
                 <div className="text-sm font-bold text-zinc-900 uppercase">
-                  {isYouTube ? 'MP4 Video / MP3' : cleanContentType}
+                  {isYouTube ? 'DASH Web Stream' : cleanContentType}
                 </div>
               </div>
 
@@ -374,90 +480,84 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
             )}
           </div>
 
-          {/* Download Action Section */}
-          {isYouTube && ytLinks ? (
-            /* YouTube Specific Download Options */
-            <div className="space-y-3 pt-3 border-t border-zinc-100">
-              <div className="space-y-1">
-                <div className="flex items-center gap-1.5 text-xs font-semibold text-zinc-800">
-                  <Download className="w-3.5 h-3.5 text-red-600" />
-                  <span>Download MP4 / MP3:</span>
+          {/* Action Section */}
+          {isYouTube ? (
+            /* YouTube Standalone Toolset (Zero Redirects to 3rd-party websites) */
+            <div className="space-y-4 pt-4 border-t border-zinc-100">
+              {/* Standalone Clarification Box */}
+              <div className="p-4 bg-zinc-50 border border-zinc-200 rounded-xl space-y-2 text-xs">
+                <div className="flex items-center gap-2 text-zinc-900 font-semibold">
+                  <Shield className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>100% Standalone Webpage Guarantee</span>
                 </div>
-                <p className="text-[11px] text-zinc-500">
-                  YouTube streams are delivered in adaptive segments. Use the verified fast downloaders below:
+                <p className="text-zinc-600 leading-relaxed text-[11px]">
+                  Unlike aggregator websites, VidDown <strong>never redirects you to third-party ad services or spam converters</strong>.
+                </p>
+                <p className="text-zinc-600 leading-relaxed text-[11px]">
+                  YouTube encrypts its media into separate adaptive audio/video chunks (DASH/HLS) that cannot be saved directly as a static file by browser scripts without external re-encoding. VidDown directly downloads <strong>all direct video URLs (.mp4, .webm, .mov)</strong> directly to your computer.
                 </p>
               </div>
 
-              {/* Primary 1-Click Button */}
-              <a
-                href={ytLinks.saveFromUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => onDownloadStarted(customFilename, video.url, null, 'video/mp4')}
-                className="w-full flex items-center justify-center gap-2 px-5 py-3.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-red-600/20 active:scale-[0.99] transition-all"
+              {/* Standalone Action 1: Download Cover Thumbnail */}
+              <button
+                type="button"
+                onClick={handleDownloadThumbnail}
+                disabled={isDownloadingThumbnail}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-zinc-900 hover:bg-zinc-800 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors"
               >
-                <Download className="w-4 h-4" />
-                <span>Download MP4 (Fast 1-Click SaveFrom)</span>
-                <ExternalLink className="w-3.5 h-3.5 opacity-70 ml-1" />
-              </a>
+                <ImageIcon className="w-4 h-4 text-zinc-300" />
+                <span>{isDownloadingThumbnail ? 'Saving Thumbnail...' : 'Download HD Cover Thumbnail (JPG)'}</span>
+              </button>
 
-              {/* Alternative Downloaders */}
-              <div className="grid grid-cols-2 gap-2">
-                <a
-                  href={ytLinks.y2metaUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-medium rounded-lg transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>Via Y2Meta</span>
-                  <ExternalLink className="w-3 h-3 opacity-50" />
-                </a>
-
-                <a
-                  href={ytLinks.tenDownloaderUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-1.5 px-3 py-2.5 bg-zinc-100 hover:bg-zinc-200 text-zinc-800 text-xs font-medium rounded-lg transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5 text-zinc-500" />
-                  <span>Via 10Downloader</span>
-                  <ExternalLink className="w-3 h-3 opacity-50" />
-                </a>
-              </div>
-
-              {/* Terminal CLI Command */}
-              <div className="p-3 bg-zinc-900 rounded-xl text-zinc-100 space-y-2 text-xs">
-                <div className="flex items-center justify-between text-zinc-400">
-                  <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                    <Terminal className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Download via Terminal (yt-dlp)</span>
+              {/* Standalone Action 2: Direct Command Line for Original Video */}
+              {ytCommands && (
+                <div className="p-3.5 bg-zinc-900 rounded-xl text-zinc-100 space-y-2 text-xs">
+                  <div className="flex items-center justify-between text-zinc-400">
+                    <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                      <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Download Video Locally (CLI)</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyCommand(ytCommands.ytDlpVideoCmd)}
+                      className="text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1"
+                    >
+                      {copiedCmd ? (
+                        <>
+                          <Check className="w-3 h-3" />
+                          <span>Copied!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyCommand(ytLinks.ytDlpVideoCmd)}
-                    className="text-emerald-400 hover:text-emerald-300 font-medium inline-flex items-center gap-1"
-                  >
-                    {copiedCmd ? (
-                      <>
-                        <Check className="w-3 h-3" />
-                        <span>Copied!</span>
-                      </>
-                    ) : (
-                      <>
-                        <Copy className="w-3 h-3" />
-                        <span>Copy</span>
-                      </>
-                    )}
-                  </button>
+                  <p className="text-[10px] text-zinc-400">
+                    Download full 1080p audio/video directly on your computer with zero web converters:
+                  </p>
+                  <pre className="font-mono text-[10px] text-zinc-300 overflow-x-auto select-all bg-black/40 p-2 rounded-sm">
+                    {ytCommands.ytDlpVideoCmd}
+                  </pre>
                 </div>
-                <pre className="font-mono text-[11px] overflow-x-auto text-zinc-300 py-1 select-all bg-black/40 px-2 rounded-sm">
-                  {ytLinks.ytDlpVideoCmd}
-                </pre>
-              </div>
+              )}
+
+              {/* Standalone Action 3: Switch to direct MP4 sample */}
+              {onLoadDirectSample && (
+                <button
+                  type="button"
+                  onClick={() => onLoadDirectSample('https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4')}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium rounded-xl border border-blue-200 transition-colors"
+                >
+                  <span>Test Standalone Downloader with Direct MP4</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           ) : (
-            /* Direct Media Stream Download Options */
+            /* Direct Media Stream Download (Pure Standalone In-Page Engine) */
             <div className="space-y-3 pt-4 border-t border-zinc-100">
               <button
                 id="btn-trigger-download"
@@ -467,8 +567,32 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
                 className="w-full flex items-center justify-center gap-2.5 px-6 py-3.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white text-base font-semibold rounded-xl shadow-md shadow-blue-600/20 active:scale-[0.99] transition-all"
               >
                 <Download className="w-5 h-5" />
-                <span>{isDownloading ? 'Preparing Download...' : 'Download Video Now'}</span>
+                <span>{isDownloading ? 'Downloading Video...' : 'Download Video Now'}</span>
               </button>
+
+              {/* In-Page Download Progress Bar */}
+              {isDownloading && (
+                <div className="p-3.5 bg-blue-50/70 border border-blue-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between text-xs text-blue-900 font-medium">
+                    <span>{downloadStatus || 'Downloading video...'}</span>
+                    {downloadSpeed && <span className="font-mono text-[11px]">{downloadSpeed}</span>}
+                  </div>
+                  <div className="w-full h-2 bg-blue-200/80 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-600 transition-all duration-200"
+                      style={{ width: `${downloadProgress ?? 20}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Success Banner */}
+              {downloadSuccess && !isDownloading && (
+                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl flex items-center gap-2.5 text-xs font-medium">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Video saved directly to your device!</span>
+                </div>
+              )}
 
               <div className="flex items-center justify-between text-xs text-zinc-500 pt-1">
                 <span>Direct media container file</span>
@@ -477,33 +601,33 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
                 </span>
               </div>
 
-              {/* Static CORS helper if direct automated save was blocked */}
+              {/* Static CORS helper if direct automated save was blocked on GitHub Pages */}
               {showCorsHelp && (
                 <div className="p-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl space-y-3 text-xs">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                     <div>
                       <p className="font-bold text-amber-950">
-                        Host Restrictions Detected (CORS)
+                        Browser Security Restriction (CORS)
                       </p>
-                      <p className="text-amber-800 mt-0.5 leading-relaxed">
-                        This media host prohibits automated script downloads in the browser. You can save it directly using either method:
+                      <p className="text-amber-800 mt-0.5 leading-relaxed text-[11px]">
+                        This remote media host does not allow third-party scripts to fetch raw video bytes into browser memory. You can save it directly using standard browser controls:
                       </p>
                     </div>
                   </div>
 
                   <div className="space-y-2 pt-1">
                     <div className="p-2.5 bg-white rounded-lg border border-amber-200/80 space-y-1">
-                      <span className="font-semibold text-zinc-900">Method 1: Right-Click Player</span>
+                      <span className="font-semibold text-zinc-900">Method 1: Right-Click Video Player</span>
                       <p className="text-zinc-600 text-[11px]">
-                        Right-click the video player on the left and select <strong className="text-zinc-900">"Save Video As..."</strong> to save the exact stream directly to your files.
+                        Right-click the video player on the left and choose <strong className="text-zinc-900">"Save Video As..."</strong> to directly save the original file to your disk.
                       </p>
                     </div>
 
                     <div className="p-2.5 bg-white rounded-lg border border-amber-200/80 flex items-center justify-between gap-2">
                       <div>
-                        <span className="font-semibold text-zinc-900">Method 2: Direct Stream</span>
-                        <p className="text-zinc-600 text-[11px]">Open stream in video viewer and press Ctrl+S.</p>
+                        <span className="font-semibold text-zinc-900">Method 2: Open Media Directly</span>
+                        <p className="text-zinc-600 text-[11px]">Opens the raw stream in browser player where Ctrl+S saves it.</p>
                       </div>
                       <a
                         href={video.url}
@@ -517,7 +641,7 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
 
                     <div className="p-2.5 bg-zinc-900 text-zinc-100 rounded-lg space-y-1">
                       <div className="flex items-center justify-between text-zinc-400">
-                        <span className="font-mono text-[11px]">Method 3: Terminal curl</span>
+                        <span className="font-mono text-[11px]">Method 3: Terminal Command</span>
                         <button
                           type="button"
                           onClick={() => handleCopyCommand(`curl -L -o "${customFilename}" "${video.url}"`)}

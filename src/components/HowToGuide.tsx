@@ -52,9 +52,9 @@ export const HowToGuide: React.FC = () => {
           <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm">
             4
           </div>
-          <h4 className="font-semibold text-zinc-900 text-base">YouTube & Streaming Platforms</h4>
+          <h4 className="font-semibold text-zinc-900 text-base">Direct Video URLs vs Stream Platforms</h4>
           <p className="text-xs text-zinc-600 leading-relaxed">
-            Pasting a YouTube link (e.g. <code>youtube.com/watch?v=...</code> or <code>youtu.be/...</code>) instantly loads the live interactive player, real title, and channel information. Because YouTube serves audio/video in encrypted, split adaptive DASH chunks rather than a single static file, use the built-in <strong>1-Click MP4 Download (SaveFrom)</strong>, <strong>Y2Meta</strong>, or <strong>yt-dlp command</strong> to save the merged file.
+            VidDown is built as a <strong>100% standalone webpage</strong> with zero redirects to third-party ad sites. Paste any direct video link (MP4, WebM, MOV, or direct CDN URL) to download directly into your files. Proprietary streaming platforms (like YouTube) serve media in adaptive segmented DASH chunks rather than direct video files; VidDown provides in-app preview, thumbnail saving, and local terminal commands without sending you to external websites.
           </p>
         </div>
       </div>

@@ -87,7 +87,7 @@ export default function App() {
         };
 
         setProbeResult(ytResult);
-        showToast('YouTube video detected: player and fast download options ready!', 'success');
+        showToast('YouTube video loaded: in-app player and standalone tools ready', 'info');
         setIsLoading(false);
         return;
       } catch {
@@ -279,6 +279,10 @@ export default function App() {
                   <VideoPreviewCard
                     video={probeResult}
                     onDownloadStarted={handleDownloadStarted}
+                    onLoadDirectSample={(sampleUrl) => {
+                      setUrl(sampleUrl);
+                      handleInspect(sampleUrl);
+                    }}
                   />
                 )}
               </div>
