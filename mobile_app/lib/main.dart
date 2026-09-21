@@ -548,7 +548,7 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
                           icon: const Icon(Icons.video_library),
                           label: Text(
                             _selectedMuxedStream != null
-                                ? 'Download MP4 (${_selectedMuxedStream!.videoQualityLabel} • ${(_selectedMuxedStream!.size.totalMegaBytes).toStringAsFixed(1)} MB)'
+                                ? 'Download MP4 (${_selectedMuxedStream!.videoQualityLabel} • ${(_selectedMuxedStream!.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB)'
                                 : 'Download MP4 Video',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
@@ -574,7 +574,7 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
                           icon: const Icon(Icons.audiotrack, color: Color(0xFF2563EB)),
                           label: Text(
                             _selectedAudioStream != null
-                                ? 'Download Audio Only (${(_selectedAudioStream!.size.totalMegaBytes).toStringAsFixed(1)} MB)'
+                                ? 'Download Audio Only (${(_selectedAudioStream!.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB)'
                                 : 'Download Audio Track',
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
