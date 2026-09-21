@@ -101,6 +101,37 @@ app.post('/api/probe', async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // Check if YouTube URL
+    const ytMatch = parsedUrl.href.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/i);
+    if (ytMatch) {
+      const ytId = ytMatch[1];
+      try {
+        const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`);
+        const oembedData = oembedRes.ok ? await oembedRes.json() : null;
+        const title = oembedData?.title || `YouTube Video (${ytId})`;
+        const filename = title.replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, ' ').trim() + '.mp4';
+
+        res.json({
+          url: `https://www.youtube.com/watch?v=${ytId}`,
+          isHtmlPage: false,
+          isYouTube: true,
+          youTubeId: ytId,
+          title,
+          author: oembedData?.author_name || 'YouTube Creator',
+          thumbnailUrl: oembedData?.thumbnail_url || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
+          embedUrl: `https://www.youtube.com/embed/${ytId}?autoplay=0`,
+          filename,
+          contentType: 'video/mp4',
+          sizeBytes: null,
+          acceptRanges: true,
+          host: 'www.youtube.com',
+        });
+        return;
+      } catch {
+        // continue
+      }
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12000);
 

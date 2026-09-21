@@ -52,9 +52,9 @@ export const HowToGuide: React.FC = () => {
           <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-sm">
             4
           </div>
-          <h4 className="font-semibold text-zinc-900 text-base">Automatic Webpage Extraction</h4>
+          <h4 className="font-semibold text-zinc-900 text-base">YouTube & Streaming Platforms</h4>
           <p className="text-xs text-zinc-600 leading-relaxed">
-            If you enter a normal webpage URL (e.g. an article or blog post), our server automatically probes the page HTML for <code>&lt;video&gt;</code>, <code>&lt;source&gt;</code>, and OpenGraph/Twitter media tags and extracts every stream found.
+            Pasting a YouTube link (e.g. <code>youtube.com/watch?v=...</code> or <code>youtu.be/...</code>) instantly loads the live interactive player, real title, and channel information. Because YouTube serves audio/video in encrypted, split adaptive DASH chunks rather than a single static file, use the built-in <strong>1-Click MP4 Download (SaveFrom)</strong>, <strong>Y2Meta</strong>, or <strong>yt-dlp command</strong> to save the merged file.
           </p>
         </div>
       </div>
@@ -62,9 +62,9 @@ export const HowToGuide: React.FC = () => {
       <div className="p-5 rounded-xl bg-blue-50/60 border border-blue-200/70 flex items-start gap-3">
         <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
         <div className="text-xs text-blue-950 space-y-1">
-          <p className="font-semibold">Bypass Browser CORS Limitations</p>
+          <p className="font-semibold">Why Browsers Sometimes Open Links Instead of Downloading</p>
           <p className="text-blue-900/80 leading-relaxed">
-            Browsers normally block direct downloads of cross-origin files or open them in a tab instead of saving to disk. Our backend stream proxy attaches authentic <code>Content-Disposition: attachment</code> headers so your browser directly triggers a file save prompt.
+            By default, modern web browsers (Chrome, Edge, Safari) ignore the <code>download</code> attribute when a link points to an external webpage or cross-origin server without <code>Content-Disposition: attachment</code> headers. Our app prevents this by converting media to direct in-memory blobs or providing verified 1-click download helpers.
           </p>
         </div>
       </div>

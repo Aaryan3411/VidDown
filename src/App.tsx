@@ -12,7 +12,13 @@ import { BatchDownloader } from './components/BatchDownloader';
 import { DownloadHistory } from './components/DownloadHistory';
 import { HowToGuide } from './components/HowToGuide';
 import { VideoProbeResult, DownloadHistoryItem } from './types';
-import { extractClientFilename, inferVideoContentType } from './utils';
+import {
+  extractClientFilename,
+  inferVideoContentType,
+  extractYouTubeId,
+  fetchYouTubeMetadata,
+  sanitizeFilename,
+} from './utils';
 import { AlertCircle, CheckCircle2, ShieldCheck, Zap, Video, Sparkles } from 'lucide-react';
 
 const STORAGE_KEY = 'video_url_downloader_history_v1';
@@ -56,6 +62,39 @@ export default function App() {
     setError(null);
     setProbeResult(null);
 
+    // 1. Check if the URL is a YouTube link
+    const ytId = extractYouTubeId(rawUrl);
+    if (ytId) {
+      try {
+        const meta = await fetchYouTubeMetadata(ytId);
+        const title = meta?.title || `YouTube Video (${ytId})`;
+        const filename = sanitizeFilename(title, 'mp4');
+
+        const ytResult: VideoProbeResult = {
+          url: `https://www.youtube.com/watch?v=${ytId}`,
+          isHtmlPage: false,
+          isYouTube: true,
+          youTubeId: ytId,
+          title,
+          author: meta?.author || 'YouTube Channel',
+          thumbnailUrl: meta?.thumbnailUrl || `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`,
+          embedUrl: meta?.embedUrl || `https://www.youtube.com/embed/${ytId}?autoplay=0`,
+          filename,
+          contentType: 'video/mp4',
+          sizeBytes: null,
+          acceptRanges: true,
+          host: 'www.youtube.com',
+        };
+
+        setProbeResult(ytResult);
+        showToast('YouTube video detected: player and fast download options ready!', 'success');
+        setIsLoading(false);
+        return;
+      } catch {
+        // Continue to server/direct probe if oembed fails
+      }
+    }
+
     let serverData: VideoProbeResult | null = null;
     let serverFailed = false;
 
@@ -89,7 +128,7 @@ export default function App() {
       return;
     }
 
-    // Static Client-Side Fallback (for GitHub Pages and static deployments)
+    // Static Client-Side Fallback (for GitHub Pages and direct file links)
     try {
       const parsed = new URL(rawUrl);
       if (!['http:', 'https:'].includes(parsed.protocol)) {

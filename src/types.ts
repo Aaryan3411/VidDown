@@ -7,6 +7,11 @@ export interface VideoProbeResult {
   acceptRanges?: boolean;
   host?: string;
   title?: string;
+  author?: string;
+  thumbnailUrl?: string;
+  embedUrl?: string;
+  isYouTube?: boolean;
+  youTubeId?: string;
   candidates?: Array<{ url: string; label: string; format?: string }>;
   error?: string;
 }

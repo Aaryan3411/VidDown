@@ -69,7 +69,85 @@ export function extractClientFilename(rawUrl: string): string {
   return `video_${Date.now()}.mp4`;
 }
 
+export function extractYouTubeId(url: string): string | null {
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.hostname.includes('youtu.be')) {
+      const id = parsed.pathname.slice(1).split('/')[0].split('?')[0];
+      if (id && id.length >= 8) return id;
+    }
+    if (parsed.hostname.includes('youtube.com')) {
+      if (parsed.pathname.startsWith('/watch')) {
+        const v = parsed.searchParams.get('v');
+        if (v) return v;
+      }
+      if (parsed.pathname.startsWith('/shorts/') || parsed.pathname.startsWith('/embed/') || parsed.pathname.startsWith('/v/')) {
+        const id = parsed.pathname.split('/')[2]?.split('?')[0];
+        if (id && id.length >= 8) return id;
+      }
+    }
+  } catch {
+    // fallback regex
+  }
+  const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=|shorts\/))([\w-]{11})/i);
+  return match ? match[1] : null;
+}
+
+export async function fetchYouTubeMetadata(
+  videoId: string
+): Promise<{ title: string; author: string; thumbnailUrl: string; embedUrl: string } | null> {
+  try {
+    const target = `https://www.youtube.com/watch?v=${videoId}`;
+    const endpoint = `https://www.youtube.com/oembed?url=${encodeURIComponent(target)}&format=json`;
+    const res = await fetch(endpoint);
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        title: data.title || `YouTube_Video_${videoId}`,
+        author: data.author_name || 'YouTube Creator',
+        thumbnailUrl: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=0&rel=0`,
+      };
+    }
+  } catch {
+    // network or blocked
+  }
+  return {
+    title: `YouTube_Video_${videoId}`,
+    author: 'YouTube',
+    thumbnailUrl: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=0&rel=0`,
+  };
+}
+
+export function sanitizeFilename(name: string, ext = 'mp4'): string {
+  const sanitized = name.replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, ' ').trim();
+  if (sanitized.toLowerCase().endsWith(`.${ext.toLowerCase()}`)) {
+    return sanitized;
+  }
+  return `${sanitized}.${ext}`;
+}
+
+export function getYouTubeDownloadLinks(videoId: string) {
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  return {
+    saveFromUrl: `https://ssyoutube.com/watch?v=${videoId}`,
+    y2metaUrl: `https://y2meta.tube/en/?url=${encodeURIComponent(ytUrl)}`,
+    tenDownloaderUrl: `https://10downloader.com/download?v=${encodeURIComponent(ytUrl)}`,
+    cobaltUrl: `https://cobalt.tools/`,
+    ytDlpVideoCmd: `yt-dlp -f "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" "${ytUrl}"`,
+    ytDlpAudioCmd: `yt-dlp -x --audio-format mp3 "${ytUrl}"`,
+  };
+}
+
 export const SAMPLE_VIDEOS: SampleVideo[] = [
+  {
+    title: 'YouTube Stream Sample',
+    resolution: '1080p HD',
+    format: 'YouTube',
+    sizeApprox: 'Adaptive',
+    url: 'https://www.youtube.com/watch?v=7w7LUaLpM4E',
+  },
   {
     title: 'Blooming Flower (MP4)',
     resolution: '640 × 360',
