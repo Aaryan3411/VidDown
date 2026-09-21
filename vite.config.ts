@@ -6,7 +6,21 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     base: './',
-    plugins: [react(), tailwindcss()],
+    plugins: [
+      {
+        name: 'vite-entry-transform',
+        transformIndexHtml: {
+          order: 'pre',
+          handler(html) {
+            return html
+              .replace('<script type="module" crossorigin src="./assets/app.js"></script>', '<script type="module" src="./src/main.tsx"></script>')
+              .replace('<link rel="stylesheet" crossorigin href="./assets/app.css" />', '');
+          },
+        },
+      },
+      react(),
+      tailwindcss(),
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

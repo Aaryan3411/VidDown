@@ -16,23 +16,15 @@ function copyRecursive(src, dest) {
   }
 }
 
-// 1. Ensure docs directory exists
-fs.mkdirSync('docs', { recursive: true });
-
-// 2. Copy compiled static files to docs/ (for GitHub Pages: Deploy from branch -> main -> /docs)
-copyRecursive('dist/assets', 'docs/assets');
-if (fs.existsSync('dist/index.html')) {
-  fs.copyFileSync('dist/index.html', 'docs/index.html');
-}
-if (fs.existsSync('dist/favicon.svg')) {
-  fs.copyFileSync('dist/favicon.svg', 'docs/favicon.svg');
-}
-
-// 3. Copy compiled assets to root assets/ (for GitHub Pages: Deploy from branch -> main -> / root)
+// 1. Copy compiled assets to root assets/ (for GitHub Pages: Deploy from branch -> main -> / root)
 copyRecursive('dist/assets', 'assets');
 
-// 4. Create .nojekyll in both root and docs/ to prevent GitHub Pages Jekyll processing
-fs.writeFileSync('.nojekyll', '');
-fs.writeFileSync('docs/.nojekyll', '');
+// 2. Ensure favicon is in root
+if (fs.existsSync('dist/favicon.svg')) {
+  fs.copyFileSync('dist/favicon.svg', 'favicon.svg');
+}
 
-console.log('GitHub Pages static distribution synchronized successfully into /docs and /assets');
+// 3. Create .nojekyll in root to prevent GitHub Pages Jekyll processing
+fs.writeFileSync('.nojekyll', '');
+
+console.log('GitHub Pages root static assets synchronized successfully into /assets');
