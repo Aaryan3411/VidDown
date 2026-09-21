@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Layers, Download, Play, Check, AlertCircle, Loader2, Trash2, Plus } from 'lucide-react';
 import { BatchItem } from '../types';
-import { formatBytes, SAMPLE_VIDEOS } from '../utils';
+import { formatBytes, SAMPLE_VIDEOS, inferVideoContentType, extractClientFilename } from '../utils';
 
 interface BatchDownloaderProps {
   onDownloadStarted: (filename: string, url: string, sizeBytes: number | null, contentType: string) => void;
@@ -56,20 +56,38 @@ export const BatchDownloader: React.FC<BatchDownloaderProps> = ({ onDownloadStar
       setItems([...updated]);
 
       try {
-        const res = await fetch('/api/probe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: updated[i].url }),
-        });
-        const data = await res.json();
-        if (res.ok && !data.error) {
-          updated[i].filename = data.filename || updated[i].filename;
-          updated[i].sizeBytes = data.sizeBytes ?? null;
-          updated[i].contentType = data.contentType;
-          updated[i].status = 'ready';
-        } else {
-          updated[i].status = 'error';
-          updated[i].error = data.error || 'Failed to probe URL';
+        let success = false;
+        try {
+          const res = await fetch('/api/probe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: updated[i].url }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (!data.error) {
+              updated[i].filename = data.filename || updated[i].filename;
+              updated[i].sizeBytes = data.sizeBytes ?? null;
+              updated[i].contentType = data.contentType;
+              updated[i].status = 'ready';
+              success = true;
+            }
+          }
+        } catch {
+          // Server not reachable
+        }
+
+        if (!success) {
+          // Client-side fallback
+          try {
+            const parsed = new URL(updated[i].url);
+            updated[i].filename = extractClientFilename(updated[i].url);
+            updated[i].contentType = inferVideoContentType(parsed.pathname);
+            updated[i].status = 'ready';
+          } catch {
+            updated[i].status = 'error';
+            updated[i].error = 'Invalid URL';
+          }
         }
       } catch (err: unknown) {
         updated[i].status = 'error';
@@ -80,16 +98,48 @@ export const BatchDownloader: React.FC<BatchDownloaderProps> = ({ onDownloadStar
     setIsProcessing(false);
   };
 
-  const handleDownloadSingle = (item: BatchItem) => {
-    const downloadUrl = `/api/download?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(
-      item.filename
-    )}`;
-    const link = document.createElement('a');
-    link.href = downloadUrl;
-    link.download = item.filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownloadSingle = async (item: BatchItem) => {
+    const isStaticHost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.includes('github.io') || window.location.protocol === 'file:');
+
+    if (!isStaticHost) {
+      const downloadUrl = `/api/download?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(
+        item.filename
+      )}`;
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = item.filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      try {
+        const response = await fetch(item.url, { mode: 'cors' });
+        if (response.ok) {
+          const blob = await response.blob();
+          const blobUrl = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = item.filename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(blobUrl);
+        } else {
+          throw new Error();
+        }
+      } catch {
+        const link = document.createElement('a');
+        link.href = item.url;
+        link.download = item.filename;
+        link.target = '_blank';
+        link.rel = 'noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    }
 
     onDownloadStarted(item.filename, item.url, item.sizeBytes, item.contentType || 'video/mp4');
 

@@ -29,6 +29,46 @@ export function formatDuration(seconds: number): string {
   return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
 }
 
+export function inferVideoContentType(urlPath: string): string {
+  const ext = urlPath.split('.').pop()?.split('?')[0]?.toLowerCase();
+  switch (ext) {
+    case 'mp4':
+    case 'm4v':
+      return 'video/mp4';
+    case 'webm':
+      return 'video/webm';
+    case 'ogv':
+    case 'ogg':
+      return 'video/ogg';
+    case 'mov':
+      return 'video/quicktime';
+    case 'mkv':
+      return 'video/x-matroska';
+    case 'avi':
+      return 'video/x-msvideo';
+    case 'flv':
+      return 'video/x-flv';
+    case 'ts':
+      return 'video/mp2t';
+    default:
+      return 'video/mp4';
+  }
+}
+
+export function extractClientFilename(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    const pathname = parsed.pathname;
+    const last = pathname.split('/').filter(Boolean).pop();
+    if (last && last.includes('.')) {
+      return decodeURIComponent(last).replace(/[/\\?%*:|"<>]/g, '_');
+    }
+  } catch {
+    // fallback
+  }
+  return `video_${Date.now()}.mp4`;
+}
+
 export const SAMPLE_VIDEOS: SampleVideo[] = [
   {
     title: 'Blooming Flower (MP4)',

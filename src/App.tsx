@@ -12,6 +12,7 @@ import { BatchDownloader } from './components/BatchDownloader';
 import { DownloadHistory } from './components/DownloadHistory';
 import { HowToGuide } from './components/HowToGuide';
 import { VideoProbeResult, DownloadHistoryItem } from './types';
+import { extractClientFilename, inferVideoContentType } from './utils';
 import { AlertCircle, CheckCircle2, ShieldCheck, Zap, Video, Sparkles } from 'lucide-react';
 
 const STORAGE_KEY = 'video_url_downloader_history_v1';
@@ -55,6 +56,9 @@ export default function App() {
     setError(null);
     setProbeResult(null);
 
+    let serverData: VideoProbeResult | null = null;
+    let serverFailed = false;
+
     try {
       const res = await fetch('/api/probe', {
         method: 'POST',
@@ -64,20 +68,52 @@ export default function App() {
         body: JSON.stringify({ url: rawUrl }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok || data.error) {
-        throw new Error(data.error || 'Failed to inspect the provided URL.');
+      if (res.ok) {
+        serverData = await res.json();
+      } else {
+        serverFailed = true;
       }
+    } catch {
+      // Backend not running (e.g. GitHub Pages static host)
+      serverFailed = true;
+    }
 
-      setProbeResult(data);
-      if (data.isHtmlPage && data.candidates?.length === 0) {
+    if (serverData && !serverData.error) {
+      setProbeResult(serverData);
+      if (serverData.isHtmlPage && serverData.candidates?.length === 0) {
         showToast('Webpage parsed, but no direct video tags detected.', 'info');
       } else {
         showToast('Video details detected successfully!', 'success');
       }
+      setIsLoading(false);
+      return;
+    }
+
+    // Static Client-Side Fallback (for GitHub Pages and static deployments)
+    try {
+      const parsed = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error('Please enter a valid HTTP or HTTPS URL.');
+      }
+
+      const filename = extractClientFilename(rawUrl);
+      const contentType = inferVideoContentType(parsed.pathname);
+
+      const fallbackResult: VideoProbeResult = {
+        url: rawUrl,
+        isHtmlPage: false,
+        contentType,
+        filename,
+        sizeBytes: null,
+        acceptRanges: true,
+        host: parsed.hostname,
+      };
+
+      setProbeResult(fallbackResult);
+      showToast('Video details loaded (Direct Mode)', 'success');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Failed to connect to video URL.';
+      const message =
+        err instanceof Error ? err.message : 'Please enter a valid HTTP or HTTPS video URL.';
       setError(message);
     } finally {
       setIsLoading(false);

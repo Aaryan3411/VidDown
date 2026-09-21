@@ -33,7 +33,13 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
   const [videoError, setVideoError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const [useDirectStream, setUseDirectStream] = useState<boolean>(
+    typeof window !== 'undefined' && window.location.hostname.includes('github.io')
+  );
+  const [downloadTip, setDownloadTip] = useState<string | null>(null);
+
   const streamProxyUrl = `/api/stream-proxy?url=${encodeURIComponent(video.url)}`;
+  const effectiveStreamSrc = useDirectStream ? video.url : streamProxyUrl;
   const downloadApiUrl = `/api/download?url=${encodeURIComponent(video.url)}&filename=${encodeURIComponent(
     customFilename
   )}`;
@@ -59,8 +65,10 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
     }
   };
 
-  const handleTriggerDownload = () => {
+  const handleTriggerDownload = async () => {
     setIsDownloading(true);
+    setDownloadTip(null);
+
     onDownloadStarted(
       customFilename,
       video.url,
@@ -68,13 +76,50 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
       video.contentType ?? 'video/mp4'
     );
 
-    // Create an invisible anchor tag to initiate the download through the proxy
-    const link = document.createElement('a');
-    link.href = downloadApiUrl;
-    link.download = customFilename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const isStaticHost =
+      typeof window !== 'undefined' &&
+      (window.location.hostname.includes('github.io') || window.location.protocol === 'file:');
+
+    if (!isStaticHost) {
+      // Try server proxy download first
+      const link = document.createElement('a');
+      link.href = downloadApiUrl;
+      link.download = customFilename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } else {
+      // Client-side static download mode (e.g. GitHub Pages)
+      try {
+        const response = await fetch(video.url, { mode: 'cors' });
+        if (response.ok) {
+          const blob = await response.blob();
+          const blobUrl = window.URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = customFilename;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          window.URL.revokeObjectURL(blobUrl);
+          setIsDownloading(false);
+          return;
+        }
+      } catch {
+        // CORS prevented client fetch, trigger direct download link
+      }
+
+      const link = document.createElement('a');
+      link.href = video.url;
+      link.download = customFilename;
+      link.target = '_blank';
+      link.rel = 'noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setDownloadTip('If the video opened in your browser instead of saving, right-click the video and choose "Save Video As".');
+    }
 
     setTimeout(() => {
       setIsDownloading(false);
@@ -193,12 +238,18 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
             ) : (
               <video
                 ref={videoRef}
-                src={streamProxyUrl}
+                src={effectiveStreamSrc}
                 controls
                 playsInline
                 preload="metadata"
                 onLoadedMetadata={handleMetadataLoaded}
-                onError={() => setVideoError('Error loading video stream')}
+                onError={() => {
+                  if (!useDirectStream) {
+                    setUseDirectStream(true);
+                  } else {
+                    setVideoError('Error loading video stream');
+                  }
+                }}
                 className="w-full h-full object-contain"
               />
             )}
@@ -207,7 +258,9 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
           <div className="flex items-center justify-between text-xs text-zinc-500 px-1">
             <span className="flex items-center gap-1.5">
               <Play className="w-3 h-3 text-blue-600" />
-              <span>In-browser live preview streamed via server proxy</span>
+              <span>
+                {useDirectStream ? 'Direct source stream' : 'In-browser preview streamed via proxy'}
+              </span>
             </span>
             {duration && <span>Duration: {formatDuration(duration)}</span>}
           </div>
@@ -292,6 +345,13 @@ export const VideoPreviewCard: React.FC<VideoPreviewCardProps> = ({
                 .{customFilename.split('.').pop()}
               </span>
             </div>
+
+            {downloadTip && (
+              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl space-y-1">
+                <p className="font-semibold">Notice for static / browser downloads:</p>
+                <p>{downloadTip}</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
