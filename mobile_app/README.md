@@ -28,8 +28,9 @@ GitHub's cloud servers (Ubuntu with Java & Flutter pre-installed) will build you
 ---
 
 ## Features Built in the Mobile App
-- **Native YouTube Stream Extraction:** Uses `youtube_explode_dart` directly on the device.
-- **Direct Video File Downloader:** Direct `.mp4` and `.webm` downloads via high-speed segmented chunking.
-- **Audio Extraction:** Download MP3/Audio streams directly from videos.
-- **Saves to Phone Downloads:** Files are written directly to `/storage/emulated/0/Download` on your phone so they appear in your Gallery and Files app.
-- **Share Intent Receiver:** Support for sharing links directly from the YouTube app or Chrome into VidDown.
+- **Universal In-App Browser Video Sniffer:** Browse any website (Google, video streaming sites, direct web players). The app intercepts media network requests and DOM `<video>` tags in real-time.
+- **Floating Download Button:** As soon as a video or stream is detected playing on the webpage, a floating **Download** button appears right on the screen.
+- **Native YouTube Stream Extraction:** Dedicated high-speed parser using `youtube_explode_dart` on YouTube links.
+- **Multiple Formats:** Supports `.mp4`, `.webm`, `.mov`, `.m3u8`, and `.mp3` audio.
+- **Direct Save to Phone Downloads:** Files are written directly to `/storage/emulated/0/Download` on your phone so they appear in your Gallery and Files app.
+- **Background Multi-threaded Downloads:** Uses Dio segmented downloads with real-time percentage progress indicators.

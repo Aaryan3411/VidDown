@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -12,16 +13,16 @@ void main() {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  runApp(const VidDownApp());
+  runApp(const UniversalDownloaderApp());
 }
 
-class VidDownApp extends StatelessWidget {
-  const VidDownApp({super.key});
+class UniversalDownloaderApp extends StatelessWidget {
+  const UniversalDownloaderApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'VidDown Mobile',
+      title: 'VidDown Universal',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -29,109 +30,143 @@ class VidDownApp extends StatelessWidget {
           seedColor: const Color(0xFF2563EB),
           primary: const Color(0xFF2563EB),
         ),
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
-          elevation: 0,
-          scrolledUnderElevation: 1,
-          iconTheme: IconThemeData(color: Color(0xFF0F172A)),
-          titleTextStyle: TextStyle(
-            color: Color(0xFF0F172A),
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        scaffoldBackgroundColor: const Color(0xFF0F172A),
       ),
-      home: const DownloaderHomeScreen(),
+      home: const BrowserSnifferScreen(),
     );
   }
 }
 
-class DownloaderHomeScreen extends StatefulWidget {
-  const DownloaderHomeScreen({super.key});
+class DetectedVideo {
+  final String url;
+  final String title;
+  final String ext;
+  final String? quality;
 
-  @override
-  State<DownloaderHomeScreen> createState() => _DownloaderHomeScreenState();
+  DetectedVideo({
+    required this.url,
+    required this.title,
+    required this.ext,
+    this.quality,
+  });
 }
 
-class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
-  final TextEditingController _urlController = TextEditingController();
-  final YoutubeExplode _yt = YoutubeExplode();
+class BrowserSnifferScreen extends StatefulWidget {
+  const BrowserSnifferScreen({super.key});
 
-  bool _isAnalyzing = false;
+  @override
+  State<BrowserSnifferScreen> createState() => _BrowserSnifferScreenState();
+}
+
+class _BrowserSnifferScreenState extends State<BrowserSnifferScreen> {
+  InAppWebViewController? _webViewController;
+  final TextEditingController _urlBarController = TextEditingController(text: 'https://www.google.com');
+
+  double _pageLoadingProgress = 0.0;
+  bool _isLoadingPage = false;
+  String _currentTitle = 'Browser';
+
+  // Detected media items on the current page
+  final List<DetectedVideo> _detectedVideos = [];
+
+  // Active Download State
   bool _isDownloading = false;
   double _downloadProgress = 0.0;
-  String _statusMessage = '';
+  String _downloadStatus = '';
 
-  Video? _videoDetails;
-  StreamManifest? _manifest;
-  MuxedStreamInfo? _selectedMuxedStream;
-  AudioOnlyStreamInfo? _selectedAudioStream;
+  final YoutubeExplode _yt = YoutubeExplode();
 
   @override
   void dispose() {
-    _urlController.dispose();
+    _urlBarController.dispose();
     _yt.close();
     super.dispose();
   }
 
-  Future<void> _pasteFromClipboard() async {
-    final clipboardData = await Clipboard.getData(Clipboard.kTextPlain);
-    if (clipboardData != null && clipboardData.text != null) {
-      setState(() {
-        _urlController.text = clipboardData.text!.trim();
-      });
-      _analyzeUrl();
+  void _navigateToUrl(String input) {
+    String destination = input.trim();
+    if (destination.isEmpty) return;
+
+    if (!destination.startsWith('http://') && !destination.startsWith('https://')) {
+      if (destination.contains('.') && !destination.contains(' ')) {
+        destination = 'https://$destination';
+      } else {
+        destination = 'https://www.google.com/search?q=${Uri.encodeComponent(destination)}';
+      }
+    }
+
+    _urlBarController.text = destination;
+    _webViewController?.loadUrl(
+      urlRequest: URLRequest(url: WebUri(destination)),
+    );
+  }
+
+  void _checkForVideoUrl(String rawUrl) {
+    final lower = rawUrl.toLowerCase();
+    
+    // Check if network request is a video stream/asset
+    bool isVideoFile = lower.contains('.mp4') ||
+        lower.contains('.webm') ||
+        lower.contains('.m4v') ||
+        lower.contains('.mov') ||
+        lower.contains('.m3u8') ||
+        lower.contains('.mp3') ||
+        lower.contains('video/mp4') ||
+        lower.contains('mime=video');
+
+    if (isVideoFile) {
+      if (!_detectedVideos.any((v) => v.url == rawUrl)) {
+        String ext = 'mp4';
+        if (lower.contains('.webm')) ext = 'webm';
+        if (lower.contains('.mov')) ext = 'mov';
+        if (lower.contains('.mp3')) ext = 'mp3';
+
+        setState(() {
+          _detectedVideos.add(
+            DetectedVideo(
+              url: rawUrl,
+              title: _currentTitle.isNotEmpty ? _currentTitle : 'Captured Media',
+              ext: ext,
+            ),
+          );
+        });
+      }
     }
   }
 
-  Future<void> _analyzeUrl() async {
-    final rawUrl = _urlController.text.trim();
-    if (rawUrl.isEmpty) {
-      _showSnackbar('Please enter or paste a valid link.');
-      return;
-    }
-
-    setState(() {
-      _isAnalyzing = true;
-      _videoDetails = null;
-      _manifest = null;
-      _selectedMuxedStream = null;
-      _selectedAudioStream = null;
-      _statusMessage = 'Analyzing media stream...';
-    });
+  // Sniff DOM video tags directly inside the webpage
+  Future<void> _sniffPageDomVideos() async {
+    if (_webViewController == null) return;
 
     try {
-      // Check if YouTube URL
-      if (rawUrl.contains('youtube.com') || rawUrl.contains('youtu.be')) {
-        final videoId = VideoId(rawUrl);
-        final video = await _yt.videos.get(videoId);
-        final manifest = await _yt.videos.streamsClient.getManifest(videoId);
+      final result = await _webViewController!.evaluateJavascript(source: """
+        (function() {
+          var urls = [];
+          // Check video tags
+          var vids = document.querySelectorAll('video');
+          for (var i = 0; i < vids.length; i++) {
+            if (vids[i].src && vids[i].src.length > 5) {
+              urls.push(vids[i].src);
+            }
+            var sources = vids[i].querySelectorAll('source');
+            for (var j = 0; j < sources.length; j++) {
+              if (sources[j].src && sources[j].src.length > 5) {
+                urls.push(sources[j].src);
+              }
+            }
+          }
+          return urls;
+        })();
+      """);
 
-        // Get muxed stream (contains both video and audio in a single track)
-        MuxedStreamInfo? muxed = manifest.muxed.withHighestBitrate();
-
-        // Get audio stream for MP3/Audio download option
-        AudioOnlyStreamInfo? audio = manifest.audioOnly.withHighestBitrate();
-
-        setState(() {
-          _videoDetails = video;
-          _manifest = manifest;
-          _selectedMuxedStream = muxed;
-          _selectedAudioStream = audio;
-          _isAnalyzing = false;
-        });
-      } else {
-        // Direct media URL (MP4, WEBM)
-        _downloadDirectUrl(rawUrl);
+      if (result != null && result is List) {
+        for (var raw in result) {
+          if (raw is String && raw.startsWith('http')) {
+            _checkForVideoUrl(raw);
+          }
+        }
       }
-    } catch (e) {
-      setState(() {
-        _isAnalyzing = false;
-        _statusMessage = '';
-      });
-      _showSnackbar('Failed to analyze stream: $e');
-    }
+    } catch (_) {}
   }
 
   Future<bool> _requestStoragePermissions() async {
@@ -161,9 +196,7 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
     return dir ?? (await getApplicationDocumentsDirectory());
   }
 
-  Future<void> _downloadYouTubeStream({required bool audioOnly}) async {
-    if (_videoDetails == null || _manifest == null) return;
-
+  Future<void> _startDirectDownload(DetectedVideo video) async {
     final hasPermission = await _requestStoragePermissions();
     if (!hasPermission) {
       _showSnackbar('Storage permission is required to save downloads.');
@@ -173,36 +206,87 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0.0;
-      _statusMessage = audioOnly ? 'Downloading audio...' : 'Downloading video...';
+      _downloadStatus = 'Starting download...';
     });
 
     try {
       final saveDir = await _getDownloadDirectory();
-      final cleanTitle = _videoDetails!.title
+      final cleanTitle = video.title
           .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
           .trim();
+      final fileName = '${cleanTitle}_${DateTime.now().millisecondsSinceEpoch}.${video.ext}';
+      final file = File('${saveDir.path}/$fileName');
 
-      final ext = audioOnly ? 'mp3' : 'mp4';
-      final file = File('${saveDir.path}/$cleanTitle.$ext');
+      final dio = Dio();
+      await dio.download(
+        video.url,
+        file.path,
+        onReceiveProgress: (received, total) {
+          if (total > 0) {
+            setState(() {
+              _downloadProgress = received / total;
+              _downloadStatus =
+                  '${(received / (1024 * 1024)).toStringAsFixed(1)} MB / ${(total / (1024 * 1024)).toStringAsFixed(1)} MB';
+            });
+          } else {
+            setState(() {
+              _downloadStatus = '${(received / (1024 * 1024)).toStringAsFixed(1)} MB downloaded';
+            });
+          }
+        },
+      );
 
-      final streamInfo = audioOnly
-          ? _selectedAudioStream ?? _manifest!.audioOnly.withHighestBitrate()
-          : _selectedMuxedStream ?? _manifest!.muxed.withHighestBitrate();
+      setState(() {
+        _isDownloading = false;
+        _downloadStatus = 'Saved!';
+      });
 
-      final totalBytes = streamInfo.size.totalBytes;
+      _showSuccessDialog(file.path, video.title);
+    } catch (e) {
+      setState(() {
+        _isDownloading = false;
+      });
+      _showSnackbar('Download failed: $e');
+    }
+  }
+
+  Future<void> _startYouTubeDownload(String youtubeUrl) async {
+    final hasPermission = await _requestStoragePermissions();
+    if (!hasPermission) {
+      _showSnackbar('Storage permission is required.');
+      return;
+    }
+
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0.0;
+      _downloadStatus = 'Parsing YouTube streams...';
+    });
+
+    try {
+      final videoId = VideoId(youtubeUrl);
+      final video = await _yt.videos.get(videoId);
+      final manifest = await _yt.videos.streamsClient.getManifest(videoId);
+      final muxed = manifest.muxed.withHighestBitrate();
+
+      final saveDir = await _getDownloadDirectory();
+      final cleanTitle = video.title.replaceAll(RegExp(r'[\\/:*?"<>|]'), '_').trim();
+      final file = File('${saveDir.path}/$cleanTitle.mp4');
+
+      final totalBytes = muxed.size.totalBytes;
       int downloadedBytes = 0;
 
-      final stream = _yt.videos.streamsClient.get(streamInfo);
+      final stream = _yt.videos.streamsClient.get(muxed);
       final output = file.openWrite();
 
-      await for (final data in stream) {
-        output.add(data);
-        downloadedBytes += data.length;
+      await for (final chunk in stream) {
+        output.add(chunk);
+        downloadedBytes += chunk.length;
         if (totalBytes > 0) {
           setState(() {
             _downloadProgress = downloadedBytes / totalBytes;
-            _statusMessage =
-                'Saving: ${(downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} MB / ${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+            _downloadStatus =
+                '${(downloadedBytes / (1024 * 1024)).toStringAsFixed(1)} MB / ${(totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB';
           });
         }
       }
@@ -212,66 +296,15 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
 
       setState(() {
         _isDownloading = false;
-        _statusMessage = 'Done!';
+        _downloadStatus = 'Saved!';
       });
 
-      _showSuccessDialog(file.path, cleanTitle);
+      _showSuccessDialog(file.path, video.title);
     } catch (e) {
       setState(() {
         _isDownloading = false;
       });
-      _showSnackbar('Download failed: $e');
-    }
-  }
-
-  Future<void> _downloadDirectUrl(String url) async {
-    final hasPermission = await _requestStoragePermissions();
-    if (!hasPermission) {
-      _showSnackbar('Storage permission required.');
-      return;
-    }
-
-    setState(() {
-      _isDownloading = true;
-      _downloadProgress = 0.0;
-      _statusMessage = 'Downloading direct file...';
-    });
-
-    try {
-      final saveDir = await _getDownloadDirectory();
-      final uri = Uri.parse(url);
-      String filename = uri.pathSegments.isNotEmpty
-          ? uri.pathSegments.last
-          : 'download_${DateTime.now().millisecondsSinceEpoch}.mp4';
-
-      final file = File('${saveDir.path}/$filename');
-
-      final dio = Dio();
-      await dio.download(
-        url,
-        file.path,
-        onReceiveProgress: (received, total) {
-          if (total > 0) {
-            setState(() {
-              _downloadProgress = received / total;
-              _statusMessage =
-                  '${(received / (1024 * 1024)).toStringAsFixed(1)} MB / ${(total / (1024 * 1024)).toStringAsFixed(1)} MB';
-            });
-          }
-        },
-      );
-
-      setState(() {
-        _isDownloading = false;
-        _statusMessage = 'Done!';
-      });
-
-      _showSuccessDialog(file.path, filename);
-    } catch (e) {
-      setState(() {
-        _isDownloading = false;
-      });
-      _showSnackbar('Failed to download: $e');
+      _showSnackbar('YouTube stream error: $e');
     }
   }
 
@@ -288,12 +321,13 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
           children: [
-            Icon(Icons.check_circle, color: Color(0xFF16A34A)),
+            Icon(Icons.check_circle, color: Color(0xFF22C55E)),
             SizedBox(width: 8),
-            Text('Saved to Device!'),
+            Text('Saved to Device!', style: TextStyle(color: Colors.white)),
           ],
         ),
         content: Column(
@@ -302,25 +336,25 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
           children: [
             Text(
               title,
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white70),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 12),
             const Text(
-              'Location on Phone:',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+              'Location in Downloads:',
+              style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
             ),
             const SizedBox(height: 4),
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: const Color(0xFFF1F5F9),
+                color: const Color(0xFF0F172A),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
                 filePath,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 11, color: Color(0xFF38BDF8)),
               ),
             ),
           ],
@@ -328,274 +362,265 @@ class _DownloaderHomeScreenState extends State<DownloaderHomeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('OK'),
+            child: const Text('OK', style: TextStyle(color: Color(0xFF38BDF8))),
           ),
         ],
       ),
     );
   }
 
+  void _showDetectedMediaModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E293B),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Found Videos (${_detectedVideos.length})',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white70),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+              const Divider(color: Color(0xFF334155)),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 300),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: _detectedVideos.length,
+                  itemBuilder: (ctx, i) {
+                    final item = _detectedVideos[i];
+                    return Card(
+                      color: const Color(0xFF0F172A),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: const BorderSide(color: Color(0xFF334155)),
+                      ),
+                      child: ListTile(
+                        leading: const CircleAvatar(
+                          backgroundColor: Color(0xFF2563EB),
+                          child: Icon(Icons.play_arrow, color: Colors.white),
+                        ),
+                        title: Text(
+                          item.title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          'Format: ${item.ext.toUpperCase()}',
+                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                        ),
+                        trailing: ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.pop(ctx);
+                            _startDirectDownload(item);
+                          },
+                          icon: const Icon(Icons.download, size: 16),
+                          label: const Text('Download'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF22C55E),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    bool isYouTubePage = _urlBarController.text.contains('youtube.com') || _urlBarController.text.contains('youtu.be');
+
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
-          children: [
-            Icon(Icons.download_for_offline, color: Color(0xFF2563EB)),
-            SizedBox(width: 8),
-            Text('VidDown Mobile'),
-          ],
+        backgroundColor: const Color(0xFF1E293B),
+        elevation: 0,
+        titleSpacing: 8,
+        title: Container(
+          height: 40,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.Border.all(color: const Color(0xFF334155)),
+          ),
+          child: Row(
+            children: [
+              const SizedBox(width: 8),
+              const Icon(Icons.search, size: 18, color: Color(0xFF64748B)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: TextField(
+                  controller: _urlBarController,
+                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(
+                    hintText: 'Search or enter any website URL...',
+                    hintStyle: TextStyle(color: Color(0xFF64748B), fontSize: 13),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  onSubmitted: _navigateToUrl,
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.arrow_forward, size: 18, color: Color(0xFF38BDF8)),
+                onPressed: () => _navigateToUrl(_urlBarController.text),
+              ),
+            ],
+          ),
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            onPressed: () => _webViewController?.reload(),
+          ),
+        ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // URL Input Card
-            Card(
-              elevation: 0,
-              color: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: const BorderSide(color: Color(0xFFE2E8F0)),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  children: [
-                    TextField(
-                      controller: _urlController,
-                      decoration: InputDecoration(
-                        hintText: 'Paste YouTube or Direct Video URL...',
-                        hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 14),
-                        prefixIcon: const Icon(Icons.link, color: Color(0xFF64748B)),
-                        suffixIcon: IconButton(
-                          icon: const Icon(Icons.content_paste, color: Color(0xFF2563EB)),
-                          tooltip: 'Paste from clipboard',
-                          onPressed: _pasteFromClipboard,
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFFF8FAFC),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: Color(0xFF2563EB), width: 1.5),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 46,
-                      child: ElevatedButton(
-                        onPressed: _isAnalyzing || _isDownloading ? null : _analyzeUrl,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2563EB),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 0,
-                        ),
-                        child: _isAnalyzing
-                            ? const SizedBox(
-                                height: 20,
-                                width: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.search, size: 18),
-                                  SizedBox(width: 8),
-                                  Text(
-                                    'Fetch Media Streams',
-                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                  ),
-                                ],
-                              ),
-                      ),
-                    ),
-                  ],
+      body: Stack(
+        children: [
+          Column(
+            children: [
+              if (_isLoadingPage)
+                LinearProgressIndicator(
+                  value: _pageLoadingProgress > 0 ? _pageLoadingProgress : null,
+                  minHeight: 3,
+                  backgroundColor: const Color(0xFF1E293B),
+                  valueColor: const AlwaysStoppedAnimation(Color(0xFF38BDF8)),
+                ),
+              Expanded(
+                child: InAppWebView(
+                  initialUrlRequest: URLRequest(url: WebUri('https://www.google.com')),
+                  initialSettings: InAppWebViewSettings(
+                    useShouldInterceptRequest: true,
+                    mediaPlaybackRequiresUserGesture: false,
+                    allowsInlineMediaPlayback: true,
+                    javaScriptEnabled: true,
+                    domStorageEnabled: true,
+                    databaseEnabled: true,
+                  ),
+                  onWebViewCreated: (controller) {
+                    _webViewController = controller;
+                  },
+                  onLoadStart: (controller, url) {
+                    setState(() {
+                      _isLoadingPage = true;
+                      _detectedVideos.clear();
+                      if (url != null) {
+                        _urlBarController.text = url.toString();
+                      }
+                    });
+                  },
+                  onProgressChanged: (controller, progress) {
+                    setState(() {
+                      _pageLoadingProgress = progress / 100;
+                    });
+                  },
+                  onLoadStop: (controller, url) async {
+                    setState(() {
+                      _isLoadingPage = false;
+                    });
+                    final title = await controller.getTitle();
+                    if (title != null) {
+                      setState(() {
+                        _currentTitle = title;
+                      });
+                    }
+                    _sniffPageDomVideos();
+                  },
+                  shouldInterceptRequest: (controller, request) async {
+                    final raw = request.url.toString();
+                    _checkForVideoUrl(raw);
+                    return null;
+                  },
                 ),
               ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // Download Progress Bar Card
-            if (_isDownloading)
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: const BorderSide(color: Color(0xFFBFDBFE)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
+              // Download Progress Overlay at bottom
+              if (_isDownloading)
+                Container(
+                  color: const Color(0xFF1E293B),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            _statusMessage,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFF1E3A8A),
-                            ),
+                            _downloadStatus,
+                            style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
                           ),
                           Text(
                             '${(_downloadProgress * 100).toInt()}%',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                              color: Color(0xFF2563EB),
-                            ),
+                            style: const TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold, fontSize: 13),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: LinearProgressIndicator(
-                          value: _downloadProgress > 0 ? _downloadProgress : null,
-                          minHeight: 8,
-                          backgroundColor: const Color(0xFFDBEAFE),
-                          valueColor: const AlwaysStoppedAnimation(Color(0xFF2563EB)),
-                        ),
+                      const SizedBox(height: 6),
+                      LinearProgressIndicator(
+                        value: _downloadProgress > 0 ? _downloadProgress : null,
+                        minHeight: 6,
+                        backgroundColor: const Color(0xFF0F172A),
+                        valueColor: const AlwaysStoppedAnimation(Color(0xFF22C55E)),
                       ),
                     ],
                   ),
                 ),
-              ),
-
-            // Video Details & Download Options
-            if (_videoDetails != null) ...[
-              const SizedBox(height: 16),
-              Card(
-                elevation: 0,
-                color: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: const BorderSide(color: Color(0xFFE2E8F0)),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Video Thumbnail & Details
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: Image.network(
-                          _videoDetails!.thumbnails.highResUrl,
-                          fit: BoxFit.cover,
-                          height: 180,
-                          width: double.infinity,
-                          errorBuilder: (ctx, err, stack) => Container(
-                            height: 180,
-                            color: Colors.black12,
-                            child: const Center(child: Icon(Icons.movie, size: 48)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _videoDetails!.title,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Author: ${_videoDetails!.author} • Duration: ${_videoDetails!.duration?.inMinutes ?? 0}m',
-                        style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
-                      ),
-                      const Divider(height: 24),
-
-                      // Download Action Buttons
-                      const Text(
-                        'Download Options:',
-                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 10),
-
-                      // Video (MP4) Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton.icon(
-                          onPressed: _isDownloading
-                              ? null
-                              : () => _downloadYouTubeStream(audioOnly: false),
-                          icon: const Icon(Icons.video_library),
-                          label: Text(
-                            _selectedMuxedStream != null
-                                ? 'Download MP4 (${_selectedMuxedStream!.videoQualityLabel} • ${(_selectedMuxedStream!.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB)'
-                                : 'Download MP4 Video',
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF16A34A),
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-
-                      // Audio (MP3) Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: OutlinedButton.icon(
-                          onPressed: _isDownloading
-                              ? null
-                              : () => _downloadYouTubeStream(audioOnly: true),
-                          icon: const Icon(Icons.audiotrack, color: Color(0xFF2563EB)),
-                          label: Text(
-                            _selectedAudioStream != null
-                                ? 'Download Audio Only (${(_selectedAudioStream!.size.totalBytes / (1024 * 1024)).toStringAsFixed(1)} MB)'
-                                : 'Download Audio Track',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF2563EB),
-                            ),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFF2563EB)),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
             ],
-          ],
-        ),
+          ),
+
+          // Floating Download Button (Near the video / On bottom right)
+          if (_detectedVideos.isNotEmpty || isYouTubePage)
+            Positioned(
+              bottom: _isDownloading ? 80 : 24,
+              right: 20,
+              child: FloatingActionButton.extended(
+                backgroundColor: const Color(0xFF22C55E),
+                elevation: 6,
+                icon: const Icon(Icons.download, color: Colors.white),
+                label: Text(
+                  isYouTubePage
+                      ? 'Download YouTube Video'
+                      : 'Download Video (${_detectedVideos.length})',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+                onPressed: () {
+                  if (isYouTubePage) {
+                    _startYouTubeDownload(_urlBarController.text);
+                  } else {
+                    _showDetectedMediaModal();
+                  }
+                },
+              ),
+            ),
+        ],
       ),
     );
   }
