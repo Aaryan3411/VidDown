@@ -470,7 +470,7 @@ class _BrowserSnifferScreenState extends State<BrowserSnifferScreen> {
           decoration: BoxDecoration(
             color: const Color(0xFF0F172A),
             borderRadius: BorderRadius.circular(10),
-            border: Border.Border.all(color: const Color(0xFF334155)),
+            border: Border.all(color: const Color(0xFF334155)),
           ),
           child: Row(
             children: [

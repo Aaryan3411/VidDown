@@ -43,6 +43,13 @@ jobs:
           fi
           sed -i 's/<application/<application android:requestLegacyExternalStorage="true"/' "$MANIFEST"
 
+          # Ensure minSdkVersion is at least 21 for flutter_inappwebview
+          GRADLE="android/app/build.gradle"
+          if [ -f "$GRADLE" ]; then
+            sed -i 's/minSdkVersion flutter.minSdkVersion/minSdkVersion 21/' "$GRADLE"
+            sed -i 's/minSdkVersion = flutter.minSdkVersion/minSdkVersion = 21/' "$GRADLE"
+          fi
+
       - name: Get dependencies
         working-directory: ./mobile_app
         run: flutter pub get
